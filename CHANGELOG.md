@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [connect] Add method `clear_queue` to `Spirc` to remove all manually queued tracks
 - [playback] Add `SetQueue` player event, emitting when the queue changes (context loaded, track added to queue, or queue set via Spotify Connect). Gated behind `ConnectConfig::emit_set_queue_events`
 - [examples] Obtain an access token via OAuth to establish a new session and retrieve the stored credentials
+- [playback] Add `AudioKeyUnavailable` player event, emitted when Spotify refuses the audio key of the track being loaded (breaking)
 - [playback] Add track's artists to playback loading verbose logs
 - [playback] Add `PlayerConfig::decoder_plugin` for a decoder supplied by the application, preferred for the formats it takes (breaking)
 - [playback] Add the `symphonia` feature (default on): without it there are no built-in decoders and no local files, for applications that bring their own decoder
@@ -33,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- [playback] Stop instead of skipping through the queue when Spotify refuses a track's audio key
 - [discovery] Fixed startup on IPv4-only systems by falling back when the dual-stack listener is unavailable
 - [core] Reject an access-point handshake packet whose size is under four bytes or over 64 KiB, instead of panicking or allocating whatever size it names
 - [core] Pass on dealer messages that carry plain JSON, such as collection updates, instead of dropping them with a base64 warning
