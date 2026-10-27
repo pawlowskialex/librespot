@@ -1,4 +1,5 @@
 mod receive;
+mod store;
 
 use std::{
     cmp::min,
@@ -16,13 +17,13 @@ use futures_util::{StreamExt, TryFutureExt, future::IntoStream};
 use hyper::{Response, StatusCode, body::Incoming, header::CONTENT_RANGE};
 use hyper_util::client::legacy::ResponseFuture;
 
-use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::sync::{Semaphore, mpsc, oneshot};
 
 use librespot_core::{Error, FileId, Session, cdn_url::CdnUrl};
 
 use self::receive::audio_file_fetch;
+use self::store::{Store, WholeFile};
 
 use crate::range_set::{Range, RangeSet};
 
@@ -96,6 +97,13 @@ pub struct AudioFetchParams {
 
     /// The time we will wait to obtain status updates on downloading.
     pub download_timeout: Duration,
+
+    /// Keep at most this many bytes of a streaming file, in memory, instead of the whole file in a
+    /// temporary file in `SessionConfig::tmp_dir` (`None`, the default). The bytes kept are a
+    /// window around the read position, a quarter of it behind; what falls out of it is
+    /// downloaded again if a seek goes back there. A file that fits is downloaded whole, as with
+    /// the temporary file, and cached once complete; one that doesn't is never cached.
+    pub memory_limit: Option<usize>,
 }
 
 impl Default for AudioFetchParams {
@@ -113,6 +121,7 @@ impl Default for AudioFetchParams {
             download_timeout: Duration::from_secs(
                 (minimum_download_size / minimum_throughput) as u64,
             ),
+            memory_limit: None,
         }
     }
 }
@@ -311,7 +320,6 @@ impl StreamLoaderController {
 }
 
 pub struct AudioFileStreaming {
-    read_file: fs::File,
     position: u64,
     stream_loader_command_tx: mpsc::UnboundedSender<StreamLoaderCommand>,
     shared: Arc<AudioFileShared>,
@@ -322,9 +330,10 @@ struct AudioFileDownloadStatus {
     downloaded: RangeSet,
 }
 
-struct AudioFileShared {
+pub(crate) struct AudioFileShared {
     cdn_url: String,
     file_size: usize,
+    store: Store,
     bytes_per_second: usize,
     cond: Condvar,
     download_status: Mutex<AudioFileDownloadStatus>,
@@ -395,11 +404,15 @@ impl AudioFile {
             AudioFileStreaming::open(session.clone(), file_id, complete_tx, bytes_per_second);
 
         let session_ = session.clone();
-        session.spawn(complete_rx.map_ok(move |mut file| {
+        session.spawn(complete_rx.map_ok(move |shared: Arc<AudioFileShared>| {
             debug!("Downloading file {file_id} complete");
 
             if let Some(cache) = session_.cache() {
                 if let Some(cache_id) = cache.file_path(file_id) {
+                    let mut file = WholeFile {
+                        store: &shared.store,
+                        pos: 0,
+                    };
                     if let Err(e) = cache.save_file(file_id, &mut file) {
                         error!("Error caching file {file_id} to {cache_id:?}: {e}");
                     } else {
@@ -435,10 +448,10 @@ impl AudioFile {
 }
 
 impl AudioFileStreaming {
-    pub async fn open(
+    pub(crate) async fn open(
         session: Session,
         file_id: FileId,
-        complete_tx: oneshot::Sender<NamedTempFile>,
+        complete_tx: oneshot::Sender<Arc<AudioFileShared>>,
         bytes_per_second: usize,
     ) -> Result<AudioFileStreaming, Error> {
         let cdn_url = CdnUrl::new(file_id).resolve_audio(&session).await?;
@@ -505,9 +518,15 @@ impl AudioFileStreaming {
             length: upper_bound + 1,
         };
 
+        let store = match AudioFetchParams::get().memory_limit {
+            Some(limit) => Store::memory(file_size, limit),
+            None => Store::temp_file(&session.config().tmp_dir, file_size)?,
+        };
+
         let shared = Arc::new(AudioFileShared {
             cdn_url: url.to_string(),
             file_size,
+            store,
             bytes_per_second,
             cond: Condvar::new(),
             download_status: Mutex::new(AudioFileDownloadStatus {
@@ -521,11 +540,6 @@ impl AudioFileStreaming {
             throughput: AtomicUsize::new(0),
         });
 
-        let write_file = NamedTempFile::new_in(session.config().tmp_dir.clone())?;
-        write_file.as_file().set_len(file_size as u64)?;
-
-        let read_file = write_file.reopen()?;
-
         let (stream_loader_command_tx, stream_loader_command_rx) =
             mpsc::unbounded_channel::<StreamLoaderCommand>();
 
@@ -533,13 +547,11 @@ impl AudioFileStreaming {
             session.clone(),
             shared.clone(),
             initial_request,
-            write_file,
             stream_loader_command_rx,
             complete_tx,
         ));
 
         Ok(AudioFileStreaming {
-            read_file,
             position: 0,
             stream_loader_command_tx,
             shared,
@@ -610,13 +622,13 @@ impl Read for AudioFileStreaming {
             .downloaded
             .contained_length_from_value(offset);
 
+        // still holding the download status: what it says is downloaded is in the store (the
+        // downloader updates both under this lock)
+        let read_len = min(length, available_length);
+        let read_len = self.shared.store.read(offset, &mut output[..read_len])?;
         drop(download_status);
 
-        self.position = self.read_file.seek(SeekFrom::Start(offset as u64))?;
-        let read_len = min(length, available_length);
-        let read_len = self.read_file.read(&mut output[..read_len])?;
-
-        self.position += read_len as u64;
+        self.position = (offset + read_len) as u64;
         self.shared.set_read_position(self.position);
 
         Ok(read_len)
@@ -633,6 +645,12 @@ impl Seek for AudioFileStreaming {
             SeekFrom::End(pos) => self.shared.file_size as i64 - pos - 1,
             SeekFrom::Current(pos) => current_position + pos,
         };
+        if requested_pos < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before the start",
+            ));
+        }
         if requested_pos == current_position {
             return Ok(current_position as u64);
         }
@@ -657,7 +675,10 @@ impl Seek for AudioFileStreaming {
             }
         }
 
-        self.position = self.read_file.seek(pos)?;
+        self.position = match pos {
+            SeekFrom::End(p) => (self.shared.file_size as i64 + p).max(0) as u64,
+            _ => requested_pos as u64,
+        };
         self.shared.set_read_position(self.position);
 
         if !available && was_streaming {

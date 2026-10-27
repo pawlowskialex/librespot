@@ -1,6 +1,5 @@
 use std::{
     cmp::{max, min},
-    io::{Seek, SeekFrom, Write},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -9,7 +8,6 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, oneshot};
 
 use librespot_core::{Error, http_client::HttpClient, session::Session};
@@ -154,10 +152,9 @@ async fn receive_data(
 struct AudioFileFetch {
     session: Session,
     shared: Arc<AudioFileShared>,
-    output: Option<NamedTempFile>,
 
     file_data_tx: mpsc::UnboundedSender<ReceivedData>,
-    complete_tx: Option<oneshot::Sender<NamedTempFile>>,
+    complete_tx: Option<oneshot::Sender<Arc<AudioFileShared>>>,
     network_response_times: Vec<Duration>,
 
     params: AudioFetchParams,
@@ -248,12 +245,15 @@ impl AudioFileFetch {
             missing_data.subtract_range_set(&download_status.requested);
         }
 
-        // download data from after the current read position first
+        // download data from after the current read position first, as far as the store reaches
         let mut tail_end = RangeSet::new();
         let read_position = self.shared.read_position();
         tail_end.add_range(&Range::new(
             read_position,
-            self.shared.file_size - read_position,
+            min(
+                self.shared.store.ahead(),
+                self.shared.file_size - read_position,
+            ),
         ));
         let tail_end = tail_end.intersection(&missing_data);
 
@@ -262,7 +262,7 @@ impl AudioFileFetch {
             let offset = range.start;
             let length = min(range.length, bytes);
             self.download_range(offset, length)?;
-        } else if !missing_data.is_empty() {
+        } else if !missing_data.is_empty() && self.shared.store.holds_all() {
             // ok, the tail is downloaded, download something fom the beginning.
             let range = missing_data.get_range(0);
             let offset = range.start;
@@ -354,12 +354,8 @@ impl AudioFileFetch {
                 self.shared.set_ping_time(ping_time);
             }
             ReceivedData::Data(data) => {
-                match self.output.as_mut() {
-                    Some(output) => {
-                        output.seek(SeekFrom::Start(data.offset as u64))?;
-                        output.write_all(data.data.as_ref())?;
-                    }
-                    None => return Err(AudioFileError::Output.into()),
+                if self.complete_tx.is_none() {
+                    return Err(AudioFileError::Output.into());
                 }
 
                 let received_range = Range::new(data.offset, data.data.len());
@@ -370,7 +366,19 @@ impl AudioFileFetch {
                         .download_status
                         .lock()
                         .expect(DOWNLOAD_STATUS_POISON_MSG);
+                    // into the store under the download status, as the reader reads it: what the
+                    // status says is downloaded is stored. Blocks dropped for it are neither
+                    // downloaded nor requested now.
+                    let evicted = self.shared.store.write(
+                        data.offset,
+                        data.data.as_ref(),
+                        self.shared.read_position(),
+                    )?;
                     download_status.downloaded.add_range(&received_range);
+                    for range in &evicted {
+                        download_status.downloaded.subtract_range(range);
+                        download_status.requested.subtract_range(range);
+                    }
                     self.shared.cond.notify_all();
 
                     download_status.downloaded.contained_length_from_value(0)
@@ -402,17 +410,10 @@ impl AudioFileFetch {
     }
 
     fn finish(&mut self) -> AudioFileResult {
-        let output = self.output.take();
-
-        let complete_tx = self.complete_tx.take();
-
-        if let Some(mut output) = output {
-            output.rewind()?;
-            if let Some(complete_tx) = complete_tx {
-                complete_tx
-                    .send(output)
-                    .map_err(|_| AudioFileError::Channel)?;
-            }
+        if let Some(complete_tx) = self.complete_tx.take() {
+            complete_tx
+                .send(self.shared.clone())
+                .map_err(|_| AudioFileError::Channel)?;
         }
 
         Ok(())
@@ -423,9 +424,8 @@ pub(super) async fn audio_file_fetch(
     session: Session,
     shared: Arc<AudioFileShared>,
     initial_request: StreamingRequest,
-    output: NamedTempFile,
     mut stream_loader_command_rx: mpsc::UnboundedReceiver<StreamLoaderCommand>,
-    complete_tx: oneshot::Sender<NamedTempFile>,
+    complete_tx: oneshot::Sender<Arc<AudioFileShared>>,
 ) -> AudioFileResult {
     let (file_data_tx, mut file_data_rx) = mpsc::unbounded_channel();
 
@@ -453,7 +453,6 @@ pub(super) async fn audio_file_fetch(
     let mut fetch = AudioFileFetch {
         session: session.clone(),
         shared,
-        output: Some(output),
 
         file_data_tx,
         complete_tx: Some(complete_tx),

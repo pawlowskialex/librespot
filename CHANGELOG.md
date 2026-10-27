@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [playback] Add `SetQueue` player event, emitting when the queue changes (context loaded, track added to queue, or queue set via Spotify Connect). Gated behind `ConnectConfig::emit_set_queue_events`
 - [examples] Obtain an access token via OAuth to establish a new session and retrieve the stored credentials
 - [playback] Add track's artists to playback loading verbose logs
+- [audio] Add `AudioFetchParams::memory_limit` to stream a file through a bounded window in memory instead of a temporary file (breaking)
 
 ### Changed
 
