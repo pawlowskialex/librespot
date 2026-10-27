@@ -1,6 +1,9 @@
+use std::io::{Read, Seek};
 use std::ops::Deref;
 
 use thiserror::Error;
+
+use crate::metadata::audio::AudioFileFormat;
 
 #[cfg(feature = "passthrough-decoder")]
 mod passthrough_decoder;
@@ -16,6 +19,8 @@ pub enum DecoderError {
     PassthroughDecoder(String),
     #[error("Symphonia Decoder Error: {0}")]
     SymphoniaDecoder(String),
+    #[error("Decoder Plugin Error: {0}")]
+    Plugin(String),
 }
 
 pub type DecoderResult<T> = Result<T, DecoderError>;
@@ -77,6 +82,26 @@ impl Deref for AudioPacketPosition {
 pub trait AudioDecoder {
     fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError>;
     fn next_packet(&mut self) -> DecoderResult<Option<(AudioPacketPosition, AudioPacket)>>;
+}
+
+/// The input of a [`DecoderPlugin`]: the decrypted audio file.
+pub trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+
+/// A decoder supplied by the application through `PlayerConfig::decoder_plugin`, for example one
+/// suited to the platform: a fixed-point decoder on a CPU without an FPU.
+pub trait DecoderPlugin: Send + Sync {
+    /// Whether this decoder plays files in `format`. The player then prefers files in the formats
+    /// it takes, in its usual order of preference, and opens them through [`DecoderPlugin::open`].
+    fn takes(&self, format: AudioFileFormat) -> bool;
+
+    /// A decoder for `file`, a file in `format`, positioned at the start of the audio data (for
+    /// Ogg Vorbis, after Spotify's own header packet).
+    fn open(
+        &self,
+        file: Box<dyn ReadSeek>,
+        format: AudioFileFormat,
+    ) -> DecoderResult<Box<dyn AudioDecoder + Send>>;
 }
 
 impl From<DecoderError> for librespot_core::error::Error {

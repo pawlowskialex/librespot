@@ -1,7 +1,7 @@
-use std::{mem, path::PathBuf, str::FromStr, time::Duration};
+use std::{mem, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 pub use crate::dither::{DithererBuilder, TriangularDitherer, mk_ditherer};
-use crate::{convert::i24, player::duration_to_coefficient};
+use crate::{convert::i24, decoder::DecoderPlugin, player::duration_to_coefficient};
 
 #[derive(Clone, Copy, Debug, Hash, PartialOrd, Ord, PartialEq, Eq, Default)]
 pub enum Bitrate {
@@ -124,6 +124,9 @@ pub struct PlayerConfig {
     /// Setting this will enable periodically sending events during playback informing about the playback position
     /// To consume the PlayerEvent::PositionChanged event, listen to events via `Player::get_player_event_channel()``
     pub position_update_interval: Option<Duration>,
+    /// A decoder supplied by the application. For the formats it takes, files in those formats
+    /// are preferred and decoded through it instead of the built-in decoders.
+    pub decoder_plugin: Option<Arc<dyn DecoderPlugin>>,
 }
 
 impl Default for PlayerConfig {
@@ -143,6 +146,7 @@ impl Default for PlayerConfig {
             ditherer: Some(mk_ditherer::<TriangularDitherer>),
             position_update_interval: None,
             local_file_directories: Vec::new(),
+            decoder_plugin: None,
         }
     }
 }

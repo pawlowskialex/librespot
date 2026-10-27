@@ -1862,6 +1862,7 @@ async fn get_setup() -> Setup {
             ditherer,
             position_update_interval: None,
             local_file_directories,
+            decoder_plugin: None,
         }
     };
 

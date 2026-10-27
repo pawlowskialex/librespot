@@ -24,8 +24,8 @@ use crate::{
     audio_backend::Sink,
     config::{Bitrate, NormalisationMethod, NormalisationType, PlayerConfig},
     convert::Converter,
-    core::{Error, Session, SpotifyId, SpotifyUri, util::SeqGenerator},
-    decoder::{AudioDecoder, AudioPacket, AudioPacketPosition, SymphoniaDecoder},
+    core::{Error, FileId, Session, SpotifyId, SpotifyUri, util::SeqGenerator},
+    decoder::{AudioDecoder, AudioPacket, AudioPacketPosition, DecoderPlugin, SymphoniaDecoder},
     local_file::{LocalFileLookup, create_local_file_lookup},
     metadata::audio::{AudioFileFormat, AudioFiles, AudioItem},
     mixer::VolumeGetter,
@@ -931,6 +931,19 @@ impl PlayerState {
     }
 }
 
+/// The first of `formats` the track has a file in, among those a decoder plugin takes if it takes
+/// any of them.
+fn preferred_file(
+    formats: &[AudioFileFormat],
+    files: &AudioFiles,
+    plugin: Option<&dyn DecoderPlugin>,
+) -> Option<(AudioFileFormat, FileId)> {
+    let available = |format: &AudioFileFormat| files.get(format).map(|&id| (*format, id));
+    plugin
+        .and_then(|p| formats.iter().filter(|f| p.takes(**f)).find_map(available))
+        .or_else(|| formats.iter().find_map(available))
+}
+
 struct PlayerTrackLoader {
     session: Session,
     config: PlayerConfig,
@@ -1071,22 +1084,17 @@ impl PlayerTrackLoader {
             ],
         };
 
-        let (format, file_id) =
-            match formats
-                .iter()
-                .find_map(|format| match audio_item.files.get(format) {
-                    Some(&file_id) => Some((*format, file_id)),
-                    _ => None,
-                }) {
-                Some(t) => t,
-                None => {
-                    warn!(
-                        "<{}> is not available in any supported format",
-                        audio_item.name
-                    );
-                    return None;
-                }
-            };
+        let plugin = self.config.decoder_plugin.as_deref();
+        let (format, file_id) = match preferred_file(&formats, &audio_item.files, plugin) {
+            Some(t) => t,
+            None => {
+                warn!(
+                    "<{}> is not available in any supported format",
+                    audio_item.name
+                );
+                return None;
+            }
+        };
 
         let bytes_per_second = self.stream_data_rate(format)?;
 
@@ -1158,15 +1166,19 @@ impl PlayerTrackLoader {
                 hint.mime_type(mime_type);
             }
 
-            #[cfg(feature = "passthrough-decoder")]
-            let decoder_type = if self.config.passthrough {
-                PassthroughDecoder::new(audio_file, format).map(|x| Box::new(x) as Decoder)
-            } else {
-                symphonia_decoder(audio_file, hint)
+            let plugin = self
+                .config
+                .decoder_plugin
+                .as_ref()
+                .filter(|plugin| plugin.takes(format));
+            let decoder_type = match plugin {
+                Some(plugin) => plugin.open(Box::new(audio_file), format),
+                #[cfg(feature = "passthrough-decoder")]
+                None if self.config.passthrough => {
+                    PassthroughDecoder::new(audio_file, format).map(|x| Box::new(x) as Decoder)
+                }
+                None => symphonia_decoder(audio_file, hint),
             };
-
-            #[cfg(not(feature = "passthrough-decoder"))]
-            let decoder_type = { symphonia_decoder(audio_file, hint) };
 
             let normalisation_data = normalisation_data.unwrap_or_else(|| {
                 warn!("Unable to get normalisation data, continuing with defaults.");
@@ -2707,5 +2719,59 @@ where
 
     fn byte_len(&self) -> Option<u64> {
         Some(self.length)
+    }
+}
+
+#[cfg(test)]
+mod decoder_plugin_tests {
+    use super::preferred_file;
+    use crate::{
+        core::FileId,
+        decoder::{AudioDecoder, DecoderPlugin, DecoderResult, ReadSeek},
+        metadata::audio::{AudioFileFormat, AudioFiles},
+    };
+
+    struct Vorbis160;
+
+    impl DecoderPlugin for Vorbis160 {
+        fn takes(&self, format: AudioFileFormat) -> bool {
+            format == AudioFileFormat::OGG_VORBIS_160
+        }
+
+        fn open(
+            &self,
+            _file: Box<dyn ReadSeek>,
+            _format: AudioFileFormat,
+        ) -> DecoderResult<Box<dyn AudioDecoder + Send>> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn a_plugins_formats_are_preferred() {
+        let formats = [
+            AudioFileFormat::OGG_VORBIS_320,
+            AudioFileFormat::OGG_VORBIS_160,
+            AudioFileFormat::MP3_96,
+        ];
+        let files = AudioFiles(
+            [
+                (AudioFileFormat::OGG_VORBIS_320, FileId::from(&[1; 20][..])),
+                (AudioFileFormat::OGG_VORBIS_160, FileId::from(&[2; 20][..])),
+            ]
+            .into(),
+        );
+        let pick = |plugin| preferred_file(&formats, &files, plugin).map(|(f, _)| f);
+        assert_eq!(pick(None), Some(AudioFileFormat::OGG_VORBIS_320));
+        assert_eq!(
+            pick(Some(&Vorbis160)),
+            Some(AudioFileFormat::OGG_VORBIS_160)
+        );
+        // a plugin that takes none of the track's files: the usual choice
+        let only_mp3 = AudioFiles([(AudioFileFormat::MP3_96, FileId::from(&[3; 20][..]))].into());
+        assert_eq!(
+            preferred_file(&formats, &only_mp3, Some(&Vorbis160)).map(|(f, _)| f),
+            Some(AudioFileFormat::MP3_96)
+        );
     }
 }
