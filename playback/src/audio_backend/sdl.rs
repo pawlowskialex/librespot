@@ -93,21 +93,21 @@ impl Sink for SdlSink {
         }
 
         let samples = packet
-            .samples()
+            .f64_samples()
             .map_err(|e| SinkError::OnWrite(e.to_string()))?;
         let result = match self {
             Self::F32(queue) => {
-                let samples_f32: &[f32] = &converter.f64_to_f32(samples);
+                let samples_f32: &[f32] = &converter.f64_to_f32(&samples);
                 drain_sink!(queue, AudioFormat::F32.size());
                 queue.queue_audio(samples_f32)
             }
             Self::S32(queue) => {
-                let samples_s32: &[i32] = &converter.f64_to_s32(samples);
+                let samples_s32: &[i32] = &converter.f64_to_s32(&samples);
                 drain_sink!(queue, AudioFormat::S32.size());
                 queue.queue_audio(samples_s32)
             }
             Self::S16(queue) => {
-                let samples_s16: &[i16] = &converter.f64_to_s16(samples);
+                let samples_s16: &[i16] = &converter.f64_to_s16(&samples);
                 drain_sink!(queue, AudioFormat::S16.size());
                 queue.queue_audio(samples_s16)
             }

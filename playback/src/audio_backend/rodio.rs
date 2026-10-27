@@ -242,9 +242,9 @@ impl Sink for RodioSink {
 
     fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
         let samples = packet
-            .samples()
+            .f64_samples()
             .map_err(|e| RodioError::Samples(e.to_string()))?;
-        let samples_f32: &[f32] = &converter.f64_to_f32(samples);
+        let samples_f32: &[f32] = &converter.f64_to_f32(&samples);
         let source = rodio::buffer::SamplesBuffer::new(
             NUM_CHANNELS as cpal::ChannelCount,
             SAMPLE_RATE,

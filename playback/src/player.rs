@@ -944,6 +944,18 @@ fn preferred_file(
         .or_else(|| formats.iter().find_map(available))
 }
 
+/// Multiplies 16-bit samples by `gain` in fixed point (Q16), saturating.
+fn scale_s16(samples: &mut [i16], gain: f64) {
+    if gain == 1.0 {
+        return;
+    }
+    let gain = (gain.max(0.0) * 65536.0) as i64;
+    for sample in samples.iter_mut() {
+        *sample =
+            ((i64::from(*sample) * gain) >> 16).clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+    }
+}
+
 struct PlayerTrackLoader {
     session: Session,
     config: PlayerConfig,
@@ -1496,7 +1508,7 @@ impl Future for PlayerInternal {
                                 );
 
                                 if !passthrough {
-                                    match packet.samples() {
+                                    match packet.decoded() {
                                         Ok(_) => {
                                             let new_stream_position = Duration::from_millis(
                                                 new_stream_position_ms as u64,
@@ -1885,6 +1897,22 @@ impl PlayerInternal {
                                 }
                             }
                         }
+                    }
+
+                    // Integer samples (from a decoder plugin) get the volume and the normalisation
+                    // factor as one fixed-point gain. The dynamic limiter needs floating point, so
+                    // with it they get the factor only where it attenuates.
+                    if let AudioPacket::S16(ref mut data) = packet {
+                        let volume = self.volume_getter.attenuation_factor();
+                        let gain =
+                            match (self.config.normalisation, self.config.normalisation_method) {
+                                (false, _) => volume,
+                                (true, NormalisationMethod::Basic) => normalisation_factor * volume,
+                                (true, NormalisationMethod::Dynamic) => {
+                                    normalisation_factor.min(1.0) * volume
+                                }
+                            };
+                        scale_s16(data, gain);
                     }
 
                     if let Err(e) = self.sink.write(packet, &mut self.converter) {
@@ -2773,5 +2801,23 @@ mod decoder_plugin_tests {
             preferred_file(&formats, &only_mp3, Some(&Vorbis160)).map(|(f, _)| f),
             Some(AudioFileFormat::MP3_96)
         );
+    }
+}
+
+#[cfg(test)]
+mod s16_tests {
+    use super::scale_s16;
+
+    #[test]
+    fn scale_s16_attenuates_and_saturates() {
+        let mut samples = [i16::MIN, -1000, 0, 1000, i16::MAX];
+        scale_s16(&mut samples, 1.0);
+        assert_eq!(samples, [i16::MIN, -1000, 0, 1000, i16::MAX]);
+        scale_s16(&mut samples, 0.5);
+        assert_eq!(samples, [-16384, -500, 0, 500, 16383]);
+        scale_s16(&mut samples, 4.0);
+        assert_eq!(samples, [i16::MIN, -2000, 0, 2000, i16::MAX]);
+        scale_s16(&mut samples, 0.0);
+        assert_eq!(samples, [0; 5]);
     }
 }

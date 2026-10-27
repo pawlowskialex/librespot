@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{Read, Seek};
 use std::ops::Deref;
 
@@ -31,12 +32,18 @@ pub enum AudioPacketError {
     Raw,
     #[error("Decoder Samples Error: Can't return Samples on Raw")]
     Samples,
+    #[error("Decoder Samples Error: Can't return Samples on S16")]
+    S16,
 }
 
 pub type AudioPacketResult<T> = Result<T, AudioPacketError>;
 
 pub enum AudioPacket {
     Samples(Vec<f64>),
+    /// Interleaved 16-bit samples, from a decoder that works in integers. The player applies the
+    /// volume and normalisation to them in fixed point, and a sink that takes S16 gets them
+    /// unconverted: for CPUs without floating point.
+    S16(Vec<i16>),
     Raw(Vec<u8>),
 }
 
@@ -45,6 +52,7 @@ impl AudioPacket {
     pub fn samples(&self) -> AudioPacketResult<&[f64]> {
         match self {
             AudioPacket::Samples(s) => Ok(s),
+            AudioPacket::S16(_) => Err(AudioPacketError::S16),
             AudioPacket::Raw(_) => Err(AudioPacketError::Raw),
         }
     }
@@ -53,7 +61,25 @@ impl AudioPacket {
     pub fn raw(&self) -> AudioPacketResult<&[u8]> {
         match self {
             AudioPacket::Raw(d) => Ok(d),
-            AudioPacket::Samples(_) => Err(AudioPacketError::Samples),
+            AudioPacket::Samples(_) | AudioPacket::S16(_) => Err(AudioPacketError::Samples),
+        }
+    }
+
+    /// The samples as f64, converted if they are integers (for sinks that take floating point).
+    pub fn f64_samples(&self) -> AudioPacketResult<Cow<'_, [f64]>> {
+        match self {
+            AudioPacket::Samples(s) => Ok(Cow::Borrowed(s)),
+            AudioPacket::S16(s) => Ok(Cow::Owned(s16_to_f64(s))),
+            AudioPacket::Raw(_) => Err(AudioPacketError::Raw),
+        }
+    }
+
+    /// Whether this is decoded audio (samples of either kind) rather than raw data.
+    #[inline]
+    pub fn decoded(&self) -> AudioPacketResult<()> {
+        match self {
+            AudioPacket::Samples(_) | AudioPacket::S16(_) => Ok(()),
+            AudioPacket::Raw(_) => Err(AudioPacketError::Raw),
         }
     }
 
@@ -61,6 +87,7 @@ impl AudioPacket {
     pub fn is_empty(&self) -> bool {
         match self {
             AudioPacket::Samples(s) => s.is_empty(),
+            AudioPacket::S16(s) => s.is_empty(),
             AudioPacket::Raw(d) => d.is_empty(),
         }
     }
@@ -102,6 +129,11 @@ pub trait DecoderPlugin: Send + Sync {
         file: Box<dyn ReadSeek>,
         format: AudioFileFormat,
     ) -> DecoderResult<Box<dyn AudioDecoder + Send>>;
+}
+
+/// 16-bit samples as f64 in -1.0..1.0, the scale the converter maps back to 16 bits.
+pub fn s16_to_f64(samples: &[i16]) -> Vec<f64> {
+    samples.iter().map(|&s| f64::from(s) / 32768.0).collect()
 }
 
 impl From<DecoderError> for librespot_core::error::Error {

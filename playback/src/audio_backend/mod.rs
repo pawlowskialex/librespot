@@ -74,6 +74,14 @@ macro_rules! sink_as_bytes {
                         self.write_bytes(samples_s16.as_bytes())
                     }
                 },
+                AudioPacket::S16(samples) => match self.format {
+                    AudioFormat::S16 => self.write_bytes(samples.as_bytes()),
+                    // any other format: through the f64 path
+                    _ => self.write(
+                        AudioPacket::Samples(crate::decoder::s16_to_f64(&samples)),
+                        converter,
+                    ),
+                },
                 AudioPacket::Raw(samples) => self.write_bytes(&samples),
             }
         }
