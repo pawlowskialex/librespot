@@ -11,7 +11,9 @@ mod passthrough_decoder;
 #[cfg(feature = "passthrough-decoder")]
 pub use passthrough_decoder::PassthroughDecoder;
 
+#[cfg(feature = "symphonia")]
 mod symphonia_decoder;
+#[cfg(feature = "symphonia")]
 pub use symphonia_decoder::SymphoniaDecoder;
 
 #[derive(Error, Debug)]
@@ -22,6 +24,8 @@ pub enum DecoderError {
     SymphoniaDecoder(String),
     #[error("Decoder Plugin Error: {0}")]
     Plugin(String),
+    #[error("No decoder for {0:?}: built without the symphonia feature")]
+    NoDecoder(AudioFileFormat),
 }
 
 pub type DecoderResult<T> = Result<T, DecoderError>;
@@ -142,6 +146,7 @@ impl From<DecoderError> for librespot_core::error::Error {
     }
 }
 
+#[cfg(feature = "symphonia")]
 impl From<symphonia::core::errors::Error> for DecoderError {
     fn from(err: symphonia::core::errors::Error) -> Self {
         Self::SymphoniaDecoder(err.to_string())

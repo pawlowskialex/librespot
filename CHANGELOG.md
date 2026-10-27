@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [examples] Obtain an access token via OAuth to establish a new session and retrieve the stored credentials
 - [playback] Add track's artists to playback loading verbose logs
 - [playback] Add `PlayerConfig::decoder_plugin` for a decoder supplied by the application, preferred for the formats it takes (breaking)
+- [playback] Add the `symphonia` feature (default on): without it there are no built-in decoders and no local files, for applications that bring their own decoder
 - [playback] Add `AudioPacket::S16` for decoders that produce 16-bit integer samples, with the volume and normalisation applied in fixed point and passed unconverted to S16 sinks (breaking)
 - [audio] Add `AudioFetchParams::memory_limit` to stream a file through a bounded window in memory instead of a temporary file (breaking)
 

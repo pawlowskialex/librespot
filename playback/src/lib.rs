@@ -10,9 +10,14 @@ pub mod config;
 pub mod convert;
 pub mod decoder;
 pub mod dither;
+#[cfg(feature = "symphonia")]
+mod local_file;
+#[cfg(not(feature = "symphonia"))]
+#[path = "local_file_none.rs"]
 mod local_file;
 pub mod mixer;
 pub mod player;
+#[cfg(feature = "symphonia")]
 mod symphonia_util;
 
 pub const SAMPLE_RATE: u32 = 44100;

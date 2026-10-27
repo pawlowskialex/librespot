@@ -10,7 +10,7 @@ edition.workspace = true
 
 [features]
 # Refer to the workspace Cargo.toml for the list of features
-default = ["rodio-backend", "native-tls"]
+default = ["rodio-backend", "native-tls", "symphonia"]
 
 # Audio backends
 alsa-backend = ["dep:alsa"]
@@ -28,6 +28,9 @@ sdl-backend = ["dep:sdl2"]
 
 # Audio processing features
 passthrough-decoder = ["dep:ogg"]
+# The built-in decoders (and local files). Without them only a decoder plugin
+# (PlayerConfig::decoder_plugin) or the passthrough decoder plays.
+symphonia = ["dep:symphonia"]
 
 # TLS backend propagation
 native-tls = [
@@ -81,7 +84,7 @@ rodio = { version = "0.21", optional = true, default-features = false, features 
 ] }
 
 # Container and audio decoder
-symphonia = { version = "0.5", default-features = false, features = [
+symphonia = { version = "0.5", default-features = false, optional = true, features = [
     "mp3",
     "ogg",
     "vorbis",

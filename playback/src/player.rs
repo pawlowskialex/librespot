@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt, fs,
-    fs::File,
+    fmt,
     future::Future,
     io::{self, Read, Seek, SeekFrom},
     mem,
@@ -25,7 +24,7 @@ use crate::{
     config::{Bitrate, NormalisationMethod, NormalisationType, PlayerConfig},
     convert::Converter,
     core::{Error, FileId, Session, SpotifyId, SpotifyUri, util::SeqGenerator},
-    decoder::{AudioDecoder, AudioPacket, AudioPacketPosition, DecoderPlugin, SymphoniaDecoder},
+    decoder::{AudioDecoder, AudioPacket, AudioPacketPosition, DecoderPlugin},
     local_file::{LocalFileLookup, create_local_file_lookup},
     metadata::audio::{AudioFileFormat, AudioFiles, AudioItem},
     mixer::VolumeGetter,
@@ -34,10 +33,18 @@ use futures_util::{
     StreamExt, TryFutureExt, future, future::FusedFuture,
     stream::futures_unordered::FuturesUnordered,
 };
-use librespot_metadata::{audio::UniqueFields, track::Tracks};
+use librespot_metadata::track::Tracks;
 
-use symphonia::core::io::MediaSource;
-use symphonia::core::probe::Hint;
+#[cfg(not(feature = "symphonia"))]
+use crate::decoder::DecoderError;
+#[cfg(feature = "symphonia")]
+use crate::decoder::SymphoniaDecoder;
+#[cfg(feature = "symphonia")]
+use librespot_metadata::audio::UniqueFields;
+#[cfg(feature = "symphonia")]
+use std::fs::{self, File};
+#[cfg(feature = "symphonia")]
+use symphonia::core::{io::MediaSource, probe::Hint};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::SAMPLES_PER_SECOND;
@@ -959,6 +966,7 @@ fn scale_s16(samples: &mut [i16], gain: f64) {
 struct PlayerTrackLoader {
     session: Session,
     config: PlayerConfig,
+    #[cfg_attr(not(feature = "symphonia"), allow(dead_code))]
     local_file_lookup: Arc<LocalFileLookup>,
 }
 
@@ -1141,6 +1149,7 @@ impl PlayerTrackLoader {
             let mut decrypted_file = AudioDecrypt::new(key, encrypted_file);
 
             let is_ogg_vorbis = AudioFiles::is_ogg_vorbis(format);
+            #[cfg_attr(not(feature = "symphonia"), allow(unused_mut))]
             let (offset, mut normalisation_data) = if is_ogg_vorbis {
                 // Spotify stores normalisation data in a custom Ogg packet instead of Vorbis comments.
                 let normalisation_data =
@@ -1162,8 +1171,13 @@ impl PlayerTrackLoader {
                 }
             };
 
-            let mut symphonia_decoder = |audio_file, format| {
-                SymphoniaDecoder::new(audio_file, format).map(|mut decoder| {
+            #[cfg(feature = "symphonia")]
+            let mut symphonia_decoder = |audio_file| {
+                let mut hint = Hint::new();
+                if let Some(mime_type) = AudioFiles::mime_type(format) {
+                    hint.mime_type(mime_type);
+                }
+                SymphoniaDecoder::new(audio_file, hint).map(|mut decoder| {
                     // For formats other that Vorbis, we'll try getting normalisation data from
                     // ReplayGain metadata fields, if present.
                     if normalisation_data.is_none() {
@@ -1172,11 +1186,6 @@ impl PlayerTrackLoader {
                     Box::new(decoder) as Decoder
                 })
             };
-
-            let mut hint = Hint::new();
-            if let Some(mime_type) = AudioFiles::mime_type(format) {
-                hint.mime_type(mime_type);
-            }
 
             let plugin = self
                 .config
@@ -1189,7 +1198,10 @@ impl PlayerTrackLoader {
                 None if self.config.passthrough => {
                     PassthroughDecoder::new(audio_file, format).map(|x| Box::new(x) as Decoder)
                 }
-                None => symphonia_decoder(audio_file, hint),
+                #[cfg(feature = "symphonia")]
+                None => symphonia_decoder(audio_file),
+                #[cfg(not(feature = "symphonia"))]
+                None => Err(DecoderError::NoDecoder(format)),
             };
 
             let normalisation_data = normalisation_data.unwrap_or_else(|| {
@@ -1276,6 +1288,17 @@ impl PlayerTrackLoader {
         }
     }
 
+    #[cfg(not(feature = "symphonia"))]
+    async fn load_local_track(
+        &self,
+        track_uri: SpotifyUri,
+        _position_ms: u32,
+    ) -> Option<PlayerLoadedTrackData> {
+        error!("Unable to play local file <{track_uri}>: built without the symphonia feature");
+        None
+    }
+
+    #[cfg(feature = "symphonia")]
     async fn load_local_track(
         &self,
         track_uri: SpotifyUri,
@@ -2737,6 +2760,7 @@ impl<T: Read + Seek> Seek for Subfile<T> {
     }
 }
 
+#[cfg(feature = "symphonia")]
 impl<R> MediaSource for Subfile<R>
 where
     R: Read + Seek + Send + Sync,

@@ -36,7 +36,7 @@ repository = "https://github.com/librespot-org/librespot"
 edition = "2024"
 
 [features]
-default = ["native-tls", "rodio-backend", "with-libmdns"]
+default = ["native-tls", "rodio-backend", "with-libmdns", "symphonia"]
 
 # TLS backends (mutually exclusive - compile-time checks in oauth/src/lib.rs)
 # Note: Feature validation is in oauth crate since it's compiled first in the dependency tree.
@@ -131,6 +131,11 @@ with-dns-sd = ["librespot-discovery/with-dns-sd"]
 # externally. When enabled, audio is not decoded by librespot but passed through as raw Ogg Vorbis
 # data.
 passthrough-decoder = ["librespot-playback/passthrough-decoder"]
+
+# symphonia: The built-in decoders (Vorbis, MP3, FLAC) and local files. Without it, audio only
+# plays through a decoder plugin supplied by an application (PlayerConfig::decoder_plugin) or the
+# passthrough decoder.
+symphonia = ["librespot-playback/symphonia"]
 
 [lib]
 name = "librespot"
