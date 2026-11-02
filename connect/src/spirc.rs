@@ -906,6 +906,11 @@ impl SpircTask {
                 self.handle_preload_next_track();
                 return Ok(());
             }
+            PlayerEvent::AudioKeyUnavailable { track_id, .. } => {
+                // the player has stopped on this track: other devices see it paused there
+                warn!("<{track_id}> can't play: Spotify refused its audio key");
+                self.play_status = SpircPlayStatus::Stopped;
+            }
             PlayerEvent::Unavailable { track_id, .. } => {
                 self.unavailable_in_a_row += 1;
                 if self.unavailable_in_a_row >= MAX_UNAVAILABLE_IN_A_ROW {

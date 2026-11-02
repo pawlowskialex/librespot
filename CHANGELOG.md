@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [connect] Stop on the current track when an unavailable track can't be skipped, instead of staying in the loading state
 - [connect] Stop after five tracks in a row fail to load, instead of skipping through the whole queue
 - [connect] Play and play/pause while stopped load the current track and play it, instead of doing nothing
+- [connect] Stop on a track whose audio key Spotify refused, instead of showing the device loading it
 
 ## [0.8.0] - 2025-11-10
 
