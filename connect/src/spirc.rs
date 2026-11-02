@@ -1573,6 +1573,13 @@ impl SpircTask {
                 self.player.play();
                 self.play_status = SpircPlayStatus::LoadingPlay { position_ms };
             }
+            // stopped on its track, which other devices show as paused there: load it again
+            SpircPlayStatus::Stopped => {
+                if let Err(why) = self.load_track(true, 0) {
+                    warn!("couldn't load the current track to play: {why}");
+                    return;
+                }
+            }
             _ => return,
         }
 
@@ -1584,13 +1591,12 @@ impl SpircTask {
 
     fn handle_play_pause(&mut self) {
         match self.play_status {
-            SpircPlayStatus::Paused { .. } | SpircPlayStatus::LoadingPause { .. } => {
-                self.handle_play()
-            }
+            SpircPlayStatus::Paused { .. }
+            | SpircPlayStatus::LoadingPause { .. }
+            | SpircPlayStatus::Stopped => self.handle_play(),
             SpircPlayStatus::Playing { .. } | SpircPlayStatus::LoadingPlay { .. } => {
                 self.handle_pause()
             }
-            _ => (),
         }
     }
 
