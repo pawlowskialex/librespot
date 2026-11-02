@@ -79,6 +79,8 @@ struct SpircTask {
 
     play_request_id: Option<u64>,
     play_status: SpircPlayStatus,
+    /// tracks in a row that didn't load, see [MAX_UNAVAILABLE_IN_A_ROW]
+    unavailable_in_a_row: u32,
 
     connection_id_update: BoxedStreamResult<String>,
     connect_state_update: BoxedStreamResult<ClusterUpdate>,
@@ -140,6 +142,9 @@ enum SpircCommand {
 }
 
 const CONTEXT_FETCH_THRESHOLD: usize = 2;
+
+// after this many tracks in a row that didn't load, playback stops instead of skipping to the next one
+const MAX_UNAVAILABLE_IN_A_ROW: u32 = 5;
 
 // delay to update volume after a certain amount of time, instead on each update request
 const VOLUME_UPDATE_DELAY: Duration = Duration::from_millis(500);
@@ -238,6 +243,7 @@ impl Spirc {
 
             play_request_id: None,
             play_status: SpircPlayStatus::Stopped,
+            unavailable_in_a_row: 0,
 
             connection_id_update,
             connect_state_update,
@@ -799,6 +805,13 @@ impl SpircTask {
             return Ok(());
         }
 
+        if matches!(
+            event,
+            PlayerEvent::Playing { .. } | PlayerEvent::Paused { .. }
+        ) {
+            self.unavailable_in_a_row = 0;
+        }
+
         match event {
             PlayerEvent::EndOfTrack { .. } => {
                 let next_track = self
@@ -894,7 +907,15 @@ impl SpircTask {
                 return Ok(());
             }
             PlayerEvent::Unavailable { track_id, .. } => {
-                if let Err(why) = self.skip_unavailable(&track_id) {
+                self.unavailable_in_a_row += 1;
+                if self.unavailable_in_a_row >= MAX_UNAVAILABLE_IN_A_ROW {
+                    warn!(
+                        "{} tracks in a row didn't load, stopping",
+                        self.unavailable_in_a_row
+                    );
+                    self.unavailable_in_a_row = 0;
+                    self.stop_on_current_track();
+                } else if let Err(why) = self.skip_unavailable(&track_id) {
                     // e.g. the context isn't resolved yet: stop rather than stay loading for good
                     warn!("couldn't skip the unavailable track <{track_id}>, stopping: {why}");
                     self.stop_on_current_track();
