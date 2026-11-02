@@ -894,9 +894,10 @@ impl SpircTask {
                 return Ok(());
             }
             PlayerEvent::Unavailable { track_id, .. } => {
-                self.handle_unavailable(&track_id)?;
-                if self.connect_state.current_track(|t| &t.uri) == &track_id.to_uri() {
-                    self.handle_next(None)?
+                if let Err(why) = self.skip_unavailable(&track_id) {
+                    // e.g. the context isn't resolved yet: stop rather than stay loading for good
+                    warn!("couldn't skip the unavailable track <{track_id}>, stopping: {why}");
+                    self.stop_on_current_track();
                 }
             }
             _ => return Ok(()),
@@ -1693,6 +1694,21 @@ impl SpircTask {
         if let Some(track_id) = self.connect_state.preview_next_track() {
             self.player.preload(track_id);
         }
+    }
+
+    fn skip_unavailable(&mut self, track_id: &SpotifyUri) -> Result<(), Error> {
+        self.handle_unavailable(track_id)?;
+        if self.connect_state.current_track(|t| &t.uri) == &track_id.to_uri() {
+            self.handle_next(None)?
+        }
+        Ok(())
+    }
+
+    /// Stops the player, keeping the current track: other devices see it paused there.
+    fn stop_on_current_track(&mut self) {
+        self.player.stop();
+        self.connect_state.update_position(0, self.now_ms());
+        self.play_status = SpircPlayStatus::Stopped;
     }
 
     // Mark unavailable tracks so we can skip them later
