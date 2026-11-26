@@ -115,15 +115,14 @@ impl Credentials {
 
         // decrypt data using ECB mode without padding
         let blob = {
-            use aes::cipher::generic_array::GenericArray;
-            use aes::cipher::{BlockDecrypt, BlockSizeUser, KeyInit};
+            use aes::cipher::{BlockCipherDecrypt, BlockSizeUser, KeyInit};
 
             let mut data = BASE64.decode(encrypted_blob)?;
-            let cipher = Aes192::new(GenericArray::from_slice(&key));
+            let cipher = Aes192::new_from_slice(&key).expect("a 24-byte AES-192 key");
             let block_size = Aes192::block_size();
 
             for chunk in data.chunks_exact_mut(block_size) {
-                cipher.decrypt_block(GenericArray::from_mut_slice(chunk));
+                cipher.decrypt_block(chunk.try_into().expect("a whole block"));
             }
 
             let l = data.len();
@@ -185,4 +184,28 @@ where
     BASE64
         .decode(v)
         .map_err(|e| serde::de::Error::custom(e.to_string()))
+}
+
+#[cfg(test)]
+mod blob_tests {
+    use super::*;
+
+    /// A stored-credentials blob made outside librespot (Python's hashlib for the PBKDF2-SHA1 key, OpenSSL's
+    /// AES-192-ECB, the blob's layout and chaining by hand): what a Spotify client sends at a zeroconf login.
+    #[test]
+    fn with_blob_known_answer() {
+        const BLOB: &str = "+q45wnnQGYL6ECPAQBqXC6g8RpPChPoDh8HRSfgOoVayBI3GImGnT/uqVofl0eq39rxoNZxg5BKZbQeyH+/tEvYaBd1U2hz2acBZy3L18TQpnCU7c3ztxR5Q7vDSYJYUe780Gg2RKfK4GSH+Wbz2RdPaGggHAmYTTSDg/nGPXRlyTx4hqrviKy2yPk9/u+G3FQzvBTCpCSJN9QXQ4IuWxPXy+z7HUz0qMS1S7qXY8Gs=";
+        let c = Credentials::with_blob(
+            "zd1-test-user",
+            BLOB,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+        .unwrap();
+        assert_eq!(c.username.as_deref(), Some("zd1-test-user"));
+        assert_eq!(
+            c.auth_type,
+            AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS
+        );
+        assert_eq!(c.auth_data, (1u8..0x96).collect::<Vec<_>>());
+    }
 }
