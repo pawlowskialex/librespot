@@ -9,9 +9,12 @@ use governor::{
     Quota, RateLimiter, clock::MonotonicClock, middleware::NoOpMiddleware,
     state::keyed::DefaultKeyedStateStore,
 };
-use http::{Uri, header::HeaderValue};
+#[cfg(feature = "http-proxy")]
+use http::Uri;
+use http::header::HeaderValue;
 use http_body_util::{BodyExt, Full};
 use hyper::{HeaderMap, Request, Response, StatusCode, body::Incoming, header::USER_AGENT};
+#[cfg(feature = "http-proxy")]
 use hyper_proxy2::{Intercept, Proxy, ProxyConnector};
 use hyper_util::{
     client::legacy::{Client, ResponseFuture, connect::HttpConnector},
@@ -92,7 +95,10 @@ impl From<HttpClientError> for Error {
     }
 }
 
+#[cfg(feature = "http-proxy")]
 type HyperClient = Client<ProxyConnector<HttpsConnector<HttpConnector>>, Full<bytes::Bytes>>;
+#[cfg(not(feature = "http-proxy"))]
+type HyperClient = Client<HttpsConnector<HttpConnector>, Full<bytes::Bytes>>;
 
 pub struct HttpClient {
     user_agent: HeaderValue,
@@ -161,15 +167,28 @@ impl HttpClient {
 
         // When not using a proxy a dummy proxy is configured that will not intercept any traffic.
         // This prevents needing to carry the Client Connector generics through the whole project
-        let proxy = match &proxy_url {
-            Some(proxy_url) => Proxy::new(Intercept::All, proxy_url.to_string().parse()?),
-            None => Proxy::new(Intercept::None, Uri::from_static("0.0.0.0")),
+        #[cfg(feature = "http-proxy")]
+        let connector = {
+            let proxy = match &proxy_url {
+                Some(proxy_url) => Proxy::new(Intercept::All, proxy_url.to_string().parse()?),
+                None => Proxy::new(Intercept::None, Uri::from_static("0.0.0.0")),
+            };
+            ProxyConnector::from_proxy(https_connector, proxy)?
         };
-        let proxy_connector = ProxyConnector::from_proxy(https_connector, proxy)?;
+        // without the feature a proxy can't be used: refused rather than bypassed
+        #[cfg(not(feature = "http-proxy"))]
+        let connector = match proxy_url {
+            Some(_) => {
+                return Err(Error::unimplemented(
+                    "an HTTP proxy needs librespot-core's http-proxy feature",
+                ));
+            }
+            None => https_connector,
+        };
 
         let client = Client::builder(TokioExecutor::new())
             .http2_adaptive_window(true)
-            .build(proxy_connector);
+            .build(connector);
         Ok(client)
     }
 

@@ -11,7 +11,10 @@ build = "build.rs"
 
 [features]
 # Refer to the workspace Cargo.toml for the list of features
-default = ["native-tls", "oauth"]
+default = ["native-tls", "oauth", "http-proxy"]
+
+# HTTP requests through a proxy (`SessionConfig::proxy`; the access point's connection has its own tunnel)
+http-proxy = ["dep:hyper-proxy2"]
 
 # The OAuth login (librespot-oauth): its errors convert into this crate's
 oauth = ["dep:librespot-oauth"]
@@ -19,20 +22,20 @@ oauth = ["dep:librespot-oauth"]
 # TLS backends (mutually exclusive - compile-time checks here and in oauth/src/lib.rs)
 native-tls = [
     "dep:hyper-tls",
-    "hyper-proxy2/tls",
+    "hyper-proxy2?/tls",
     "librespot-oauth?/native-tls",
     "tokio-tungstenite/native-tls",
 ]
 rustls-tls-native-roots = [
     "__rustls",
-    "hyper-proxy2/rustls",
+    "hyper-proxy2?/rustls",
     "hyper-rustls/native-tokio",
     "librespot-oauth?/rustls-tls-native-roots",
     "tokio-tungstenite/rustls-tls-native-roots",
 ]
 rustls-tls-webpki-roots = [
     "__rustls",
-    "hyper-proxy2/rustls-webpki",
+    "hyper-proxy2?/rustls-webpki",
     "hyper-rustls/webpki-tokio",
     "librespot-oauth?/rustls-tls-webpki-roots",
     "tokio-tungstenite/rustls-tls-webpki-roots",
@@ -64,7 +67,7 @@ httparse = "1.10"
 http = "1.3"
 http-body-util = "0.1"
 hyper = { version = "1.6", features = ["http1", "http2"] }
-hyper-proxy2 = { version = "0.1", default-features = false }
+hyper-proxy2 = { version = "0.1", default-features = false, optional = true }
 hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "http2",
