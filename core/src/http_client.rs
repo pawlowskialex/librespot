@@ -1,14 +1,7 @@
-use std::{
-    sync::OnceLock,
-    time::{Duration, Instant},
-};
+use std::{sync::OnceLock, time::Duration};
 
 use bytes::Bytes;
 use futures_util::{FutureExt, future::IntoStream};
-use governor::{
-    Quota, RateLimiter, clock::MonotonicClock, middleware::NoOpMiddleware,
-    state::keyed::DefaultKeyedStateStore,
-};
 #[cfg(feature = "http-proxy")]
 use http::Uri;
 use http::header::HeaderValue;
@@ -20,7 +13,6 @@ use hyper_util::{
     client::legacy::{Client, ResponseFuture, connect::HttpConnector},
     rt::TokioExecutor,
 };
-use nonzero_ext::nonzero;
 use thiserror::Error;
 use url::Url;
 
@@ -29,6 +21,7 @@ use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 #[cfg(all(feature = "native-tls", not(feature = "__rustls")))]
 use hyper_tls::HttpsConnector;
 
+use crate::rate_limit::RateLimiter;
 use crate::{
     Error,
     config::{OS, os_version},
@@ -105,8 +98,7 @@ pub struct HttpClient {
     proxy_url: Option<Url>,
     hyper_client: OnceLock<HyperClient>,
 
-    rate_limiter:
-        RateLimiter<String, DefaultKeyedStateStore<String>, MonotonicClock, NoOpMiddleware>,
+    rate_limiter: RateLimiter,
 }
 
 impl HttpClient {
@@ -137,10 +129,10 @@ impl HttpClient {
 
         let replenish_interval_ns =
             RATE_LIMIT_INTERVAL.as_nanos() / RATE_LIMIT_CALLS_PER_INTERVAL as u128;
-        let quota = Quota::with_period(Duration::from_nanos(replenish_interval_ns as u64))
-            .expect("replenish interval should be valid")
-            .allow_burst(nonzero![RATE_LIMIT_CALLS_PER_INTERVAL]);
-        let rate_limiter = RateLimiter::keyed(quota);
+        let rate_limiter = RateLimiter::new(
+            Duration::from_nanos(replenish_interval_ns as u64),
+            RATE_LIMIT_CALLS_PER_INTERVAL,
+        );
 
         Self {
             user_agent,
@@ -265,10 +257,10 @@ impl HttpClient {
             }
             None => String::from(""),
         };
-        self.rate_limiter.check_key(&domain).map_err(|e| {
+        self.rate_limiter.check_key(&domain).map_err(|wait| {
             Error::resource_exhausted(format!(
                 "rate limited for at least another {} seconds",
-                e.wait_time_from(Instant::now()).as_secs()
+                wait.as_secs()
             ))
         })?;
 

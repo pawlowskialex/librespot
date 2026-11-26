@@ -61,7 +61,6 @@ futures-util = { version = "0.3", default-features = false, features = [
     "bilock",
     "unstable",
 ] }
-governor = { version = "0.10", default-features = false, features = ["std"] }
 hmac = "0.13"
 httparse = "1.10"
 http = "1.3"
@@ -80,7 +79,6 @@ hyper-util = { version = "0.1", default-features = false, features = [
     "http2",
 ] }
 log = "0.4"
-nonzero_ext = "0.3"
 num-bigint = "0.5"
 num-derive = "0.4"
 num-integer = "0.1"

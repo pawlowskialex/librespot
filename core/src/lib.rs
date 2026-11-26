@@ -38,6 +38,7 @@ pub mod login5;
 pub mod mercury;
 pub mod packet;
 mod proxytunnel;
+mod rate_limit;
 pub mod session;
 mod socket;
 #[allow(dead_code)]
