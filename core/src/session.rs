@@ -811,37 +811,7 @@ where
             }
             Some(ProductInfo) => {
                 let data = std::str::from_utf8(&data)?;
-                let mut reader = quick_xml::Reader::from_str(data);
-
-                let mut buf = Vec::new();
-                let mut current_element = String::new();
-                let mut user_attributes: UserAttributes = HashMap::new();
-
-                loop {
-                    match reader.read_event_into(&mut buf) {
-                        Ok(Event::Start(ref element)) => {
-                            std::str::from_utf8(element)?.clone_into(&mut current_element)
-                        }
-                        Ok(Event::End(_)) => {
-                            current_element = String::new();
-                        }
-                        Ok(Event::Text(ref value)) => {
-                            if !current_element.is_empty() {
-                                let _ = user_attributes.insert(
-                                    current_element.clone(),
-                                    value.xml_content()?.to_string(),
-                                );
-                            }
-                        }
-                        Ok(Event::Eof) => break,
-                        Ok(_) => (),
-                        Err(e) => warn!(
-                            "Error parsing XML at position {}: {:?}",
-                            reader.buffer_position(),
-                            e
-                        ),
-                    }
-                }
+                let user_attributes = parse_product_info(data);
 
                 trace!("Received product info: {user_attributes:#?}");
                 Session::check_catalogue(&user_attributes);
@@ -953,5 +923,68 @@ where
         }
 
         Poll::Pending
+    }
+}
+
+/// The account's attributes in a ProductInfo packet: each element's text by the element's name.
+fn parse_product_info(data: &str) -> UserAttributes {
+    let mut reader = quick_xml::Reader::from_str(data);
+
+    let mut buf = Vec::new();
+    let mut current_element = String::new();
+    let mut user_attributes: UserAttributes = HashMap::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref element)) => {
+                element.name().as_ref().clone_into(&mut current_element)
+            }
+            Ok(Event::End(_)) => {
+                current_element = String::new();
+            }
+            Ok(Event::Text(ref value)) => {
+                if !current_element.is_empty() {
+                    let _ = user_attributes.insert(
+                        current_element.clone(),
+                        // the product info has no XML declaration: 1.0
+                        value
+                            .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                            .to_string(),
+                    );
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => (),
+            Err(e) => warn!(
+                "Error parsing XML at position {}: {:?}",
+                reader.buffer_position(),
+                e
+            ),
+        }
+    }
+    user_attributes
+}
+
+#[cfg(test)]
+mod product_info_tests {
+    use super::parse_product_info;
+
+    /// A ProductInfo packet's XML: each element's text under its name.
+    #[test]
+    fn product_info_attributes() {
+        let xml = "<products><product><type>premium</type><catalogue>premium</catalogue>\
+                   <head-files-url>https://heads-fa.spotify.com/head/{file_id}</head-files-url>\
+                   <filter-explicit-content>0</filter-explicit-content></product></products>";
+        let a = parse_product_info(xml);
+        assert_eq!(a.get("type").map(String::as_str), Some("premium"));
+        assert_eq!(a.get("catalogue").map(String::as_str), Some("premium"));
+        assert_eq!(
+            a.get("head-files-url").map(String::as_str),
+            Some("https://heads-fa.spotify.com/head/{file_id}")
+        );
+        assert_eq!(
+            a.get("filter-explicit-content").map(String::as_str),
+            Some("0")
+        );
     }
 }
