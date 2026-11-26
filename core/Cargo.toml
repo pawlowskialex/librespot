@@ -11,28 +11,30 @@ build = "build.rs"
 
 [features]
 # Refer to the workspace Cargo.toml for the list of features
-default = ["native-tls"]
+default = ["native-tls", "oauth"]
 
-# TLS backends (mutually exclusive - see oauth/src/lib.rs for compile-time checks)
-# Note: Validation is in oauth since it's compiled first in the dependency tree.
+# The OAuth login (librespot-oauth): its errors convert into this crate's
+oauth = ["dep:librespot-oauth"]
+
+# TLS backends (mutually exclusive - compile-time checks here and in oauth/src/lib.rs)
 native-tls = [
     "dep:hyper-tls",
     "hyper-proxy2/tls",
-    "librespot-oauth/native-tls",
+    "librespot-oauth?/native-tls",
     "tokio-tungstenite/native-tls",
 ]
 rustls-tls-native-roots = [
     "__rustls",
     "hyper-proxy2/rustls",
     "hyper-rustls/native-tokio",
-    "librespot-oauth/rustls-tls-native-roots",
+    "librespot-oauth?/rustls-tls-native-roots",
     "tokio-tungstenite/rustls-tls-native-roots",
 ]
 rustls-tls-webpki-roots = [
     "__rustls",
     "hyper-proxy2/rustls-webpki",
     "hyper-rustls/webpki-tokio",
-    "librespot-oauth/rustls-tls-webpki-roots",
+    "librespot-oauth?/rustls-tls-webpki-roots",
     "tokio-tungstenite/rustls-tls-webpki-roots",
 ]
 
@@ -40,7 +42,7 @@ rustls-tls-webpki-roots = [
 __rustls = []
 
 [dependencies]
-librespot-oauth = { version = "0.8.0", path = "../oauth", default-features = false }
+librespot-oauth = { version = "0.8.0", path = "../oauth", default-features = false, optional = true }
 librespot-protocol = { version = "0.8.0", path = "../protocol", default-features = false }
 
 aes = "0.8"

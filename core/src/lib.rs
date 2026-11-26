@@ -3,6 +3,17 @@ extern crate log;
 
 use librespot_protocol as protocol;
 
+// The TLS backends are mutually exclusive (also checked in librespot-oauth, which this crate may not use)
+#[cfg(all(feature = "native-tls", feature = "__rustls"))]
+compile_error!(
+    "Feature \"native-tls\" is mutually exclusive with \"rustls-tls-native-roots\" and \"rustls-tls-webpki-roots\". Enable only one."
+);
+
+#[cfg(not(any(feature = "native-tls", feature = "__rustls")))]
+compile_error!(
+    "Either feature \"native-tls\" (default), \"rustls-tls-native-roots\" or \"rustls-tls-webpki-roots\" must be enabled for this crate."
+);
+
 #[macro_use]
 mod component;
 

@@ -19,6 +19,7 @@ use tokio::sync::{
 };
 use url::ParseError;
 
+#[cfg(feature = "oauth")]
 use librespot_oauth::OAuthError;
 
 #[derive(Debug)]
@@ -286,6 +287,7 @@ impl fmt::Display for Error {
     }
 }
 
+#[cfg(feature = "oauth")]
 impl From<OAuthError> for Error {
     fn from(err: OAuthError) -> Self {
         use OAuthError::*;
