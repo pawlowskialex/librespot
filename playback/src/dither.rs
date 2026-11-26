@@ -1,4 +1,3 @@
-use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_distr::{Distribution, Normal, Triangular, Uniform};
 use std::fmt;
@@ -43,7 +42,7 @@ impl fmt::Display for dyn Ditherer {
 }
 
 fn create_rng() -> SmallRng {
-    SmallRng::from_os_rng()
+    rand::make_rng()
 }
 
 pub struct TriangularDitherer {
