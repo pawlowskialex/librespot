@@ -38,7 +38,11 @@ rustls-tls-webpki-roots = [
     "hyper-proxy2?/rustls-webpki",
     "hyper-rustls/webpki-tokio",
     "librespot-oauth?/rustls-tls-webpki-roots",
-    "tokio-tungstenite/rustls-tls-webpki-roots",
+    # the dealer's websocket gets its TLS configuration from here (webpki-roots 1, as hyper-rustls's): with
+    # tokio-tungstenite's own roots it brought webpki-roots 0.26 beside them
+    "tokio-tungstenite/__rustls-tls",
+    "dep:rustls",
+    "dep:webpki-roots",
 ]
 
 # Internal features - these are not meant to be used by end users
@@ -108,6 +112,8 @@ tokio = { version = "1", features = [
 ] }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-tungstenite = { version = "0.30", default-features = false }
+rustls = { version = "0.23", default-features = false, optional = true }
+webpki-roots = { version = "1", optional = true }
 tokio-util = { version = "0.7", default-features = false }
 url = "2"
 uuid = { version = "1", default-features = false, features = ["v4"] }

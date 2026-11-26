@@ -496,6 +496,30 @@ impl Dealer {
 }
 
 /// Initializes a connection and returns futures that will finish when the connection is closed/lost.
+/// The websocket's TLS: with the webpki roots, a rustls configuration on webpki-roots 1 (the roots the HTTP client
+/// has); otherwise tokio-tungstenite's own.
+#[cfg(feature = "rustls-tls-webpki-roots")]
+fn connector() -> Option<tokio_tungstenite::Connector> {
+    use std::sync::OnceLock;
+    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
+    let config = CONFIG.get_or_init(|| {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        )
+    });
+    Some(tokio_tungstenite::Connector::Rustls(Arc::clone(config)))
+}
+
+#[cfg(not(feature = "rustls-tls-webpki-roots"))]
+fn connector() -> Option<tokio_tungstenite::Connector> {
+    None
+}
+
 async fn connect(
     address: &Url,
     proxy: Option<&Url>,
@@ -515,10 +539,15 @@ async fn connect(
 
     let stream = socket::connect(host, port, proxy).await?;
 
-    let (mut ws_tx, ws_rx) = tokio_tungstenite::client_async_tls(address.as_str(), stream)
-        .await?
-        .0
-        .split();
+    let (mut ws_tx, ws_rx) = tokio_tungstenite::client_async_tls_with_config(
+        address.as_str(),
+        stream,
+        None,
+        connector(),
+    )
+    .await?
+    .0
+    .split();
 
     let (send_tx, mut send_rx) = mpsc::unbounded_channel::<WsMessage>();
 
@@ -721,4 +750,19 @@ where
     let _ = join_all(tasks).await;
 
     Ok(())
+}
+
+#[cfg(all(test, feature = "rustls-tls-webpki-roots"))]
+mod connector_tests {
+    /// The websocket's TLS configuration builds (rustls finds its one crypto provider) and carries the webpki roots.
+    #[test]
+    fn the_webpki_connector_builds() {
+        match super::connector() {
+            Some(tokio_tungstenite::Connector::Rustls(config)) => {
+                assert!(config.alpn_protocols.is_empty());
+            }
+            _ => panic!("no rustls connector"),
+        }
+        assert!(!webpki_roots::TLS_SERVER_ROOTS.is_empty());
+    }
 }
