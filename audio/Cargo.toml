@@ -28,7 +28,7 @@ http-body-util = "0.1"
 hyper = { version = "1.6", features = ["http1", "http2"] }
 hyper-util = { version = "0.1", features = ["client", "http2"] }
 log = "0.4"
-tempfile = "3"
+tempfile = { version = "3", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "sync"] }
 
